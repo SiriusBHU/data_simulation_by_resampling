@@ -3,59 +3,8 @@
     author: Sirius HU
 """
 
-from dataflow.CWRU_data_load import *
-import utils.data_pre_process as dpp
-import utils.data_enhance_fft as dff
-import numpy as np
-import matplotlib.pyplot as plt
-
-import models.bpnn as bpnn           # ok
-import models.svm as svm             # ok
-import models.knn as knn             # ok
-import models.cnn as cnn             # not so good
-import models.lenet5 as lenet        # time series reconstruction
-import models.ticnn as ticnn         # ok
-import models.dncnn as dncnn         # ok
-import copy
-
-
-def data_concat(x1, x2):
-    x1, x2 = copy.deepcopy(x1), copy.deepcopy(x2)
-    x1 = [item.reshape(10, int(np.shape(item)[0] // 10), -1) for item in x1]
-    x2 = [item.reshape(10, int(np.shape(item)[0] // 10), -1) for item in x2]
-    x = [np.concatenate((item1, item2), axis=1) for item1, item2 in zip(x1, x2)]
-    x = [item.reshape(-1, np.shape(item)[-1]) for item in x]
-    return x
-
-
-def main(time_tr, time_la, time_te_list, time_la_list,
-         freq_tr, freq_la, freq_te_list, freq_la_list,
-         kn_param=5, sv_param=[1, 0.01], bp_param=600,
-         epoch=100, val_rate=0.5, mix_up=False, a=0.2):
-
-    # kn = knn.Pure_KNN(neighbors=kn_param, algorithm="kd_tree")
-    # _, acc1, __ = kn.train(freq_tr, freq_la, freq_te_list, freq_la_list, val_rate)
-    #
-    # sv = svm.Pure_SVM(C=sv_param[0], kernel="rbf", gamma=sv_param[1], decision_function_shape="ovo")
-    # _, acc2, __ = sv.PSVM_train(freq_tr, freq_la, freq_te_list, freq_la_list, val_rate)
-    #
-    # bp = bpnn.BPNN(in_num=512, hidden_num=bp_param, out_num=10, batch_size=10, lr=0.001, epoch=epoch)
-    # _, __, acc3 = bp.train(freq_tr, freq_la, freq_te_list, freq_la_list, val_rate, mix_up, a)
-    #
-    # cn = cnn.PCNN(in_num=512, out_num=10, batch_size=10, lr=0.001, epoch=epoch)
-    # _, __, acc4 = cn.train(freq_tr, freq_la, freq_te_list, freq_la_list, val_rate, mix_up, a)
-
-    # ti_cnn = ticnn.TICNN(in_num=1024, out_num=10, batch_size=32, lr=0.001, epoch=epoch)
-    # _, __, acc5 = ti_cnn.train(time_tr, time_la, time_te_list, time_la_list, val_rate, mix_up, a)
-
-    dn_cnn = dncnn.DNCNN(in_num=1024, out_num=10, batch_size=16, lr=0.001, epoch=epoch)
-    _, __, acc6 = dn_cnn.train(time_tr, time_la, time_te_list, time_la_list, val_rate, mix_up, a)
-
-    #
-    # le = lenet.LeNet(in_num=1024, out_num=10, batch_size=50, lr=0.001, epoch=epoch)
-    # _, __, acc7 = le.train(time_tr, time_la, time_te_list, time_la_list, val_rate, mix_up, a)
-
-    return np.array([acc6])#, acc5, acc6])  # acc1, acc2, acc3,
+from dataflow.CWRU_data_load import CaseWesternBearing
+import argparse
 
 
 if __name__ == '__main__':

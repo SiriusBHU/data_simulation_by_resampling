@@ -48,3 +48,4 @@ class DealDateSetConv2D(Dataset):
 
     def __len__(self):
         return self.label.size()[0]
+

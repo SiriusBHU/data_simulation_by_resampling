@@ -35,3 +35,9 @@ std_avg = np.average(std, axis=-1)
 
 
 print(1)
+
+import torch
+a = torch.tensor([1, 2, 3])
+b = torch.tensor([3, 2, 1])
+c = a == b
+d = torch.mean(c, dtype=torch.float)
