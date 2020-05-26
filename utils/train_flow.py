@@ -22,7 +22,6 @@ class NetFlow(object):
                  optimizer,
                  lr_scheduler,
                  epochs,
-                 iterations,
                  display_epoch=5):
 
         self.net = net
@@ -33,7 +32,6 @@ class NetFlow(object):
         # epoch to display evaluation result
         self.epochs = epochs
         self.display_epoch = display_epoch
-        self.iterations = iterations
 
     def train(self, train_loader, val_loader, is_init=True):
 
@@ -71,15 +69,15 @@ class NetFlow(object):
                 if torch.cuda.is_available():
                     outputs = outputs.cpu()
                     labels = labels.cpu()
-                prediction = torch.argmax(outputs).long()
+                prediction = torch.argmax(outputs, dim=-1).long()
                 _acc = torch.mean(prediction == labels, dtype=torch.float).item()
 
                 acc_train.append(_acc), loss_train.append(_loss.item())
-                print("[iteration: %3d] -- [loss: %.5f] -- [acc: %.5f]" %
-                      (i + 1, _loss.item(), _acc))
+                # print("[iteration: %3d] -- [loss: %.5f] -- [acc: %.5f]" %
+                #       (i + 1, _loss.item(), _acc))
             # record result and show
-            LOSS_train.append(loss_train[:self.iterations])
-            ACC_train.append(acc_train[:self.iterations])
+            LOSS_train.append(loss_train)
+            ACC_train.append(acc_train)
 
             # upgrade learning rate
             lr_scheduler.step(epoch)
@@ -99,18 +97,19 @@ class NetFlow(object):
                     if torch.cuda.is_available():
                         outputs = outputs.cpu()
                         labels = labels.cpu()
-                    prediction = torch.argmax(outputs).long()
+                    prediction = torch.argmax(outputs, dim=-1).long()
                     _acc = torch.mean(prediction == labels, dtype=torch.float).item()
 
                     acc_val.append(_acc), loss_val.append(_loss.item())
-            LOSS_val.append(loss_val[:self.iterations])
-            ACC_val.append(acc_val[:self.iterations])
-            print("Epoch: %3d -- Time Consumption: %.5fs\n"
-                  "====> Training:  -- [loss: %.5f] -- [acc: %.5f]\n"
-                  "====> Validation:-- [loss: %.5f] -- [acc: %.5f]\n" %
-                  (epoch + 1, time.time() - t1,
-                   sum(loss_train) / len(loss_train), sum(acc_train) / len(acc_train),
-                   sum(loss_val) / len(loss_val), sum(acc_val) / len(acc_val)))
+            LOSS_val.append(loss_val)
+            ACC_val.append(acc_val)
+            if (epoch + 1) % self.display_epoch == 0:
+                print("Epoch: %3d -- Time Consumption: %.5fs\n"
+                      "====> Training:  -- [loss: %.5f] -- [acc: %.5f]\n"
+                      "====> Validation:-- [loss: %.5f] -- [acc: %.5f]\n" %
+                      (epoch + 1, time.time() - t1,
+                       sum(loss_train) / len(loss_train), sum(acc_train) / len(acc_train),
+                       sum(loss_val) / len(loss_val), sum(acc_val) / len(acc_val)))
 
         return LOSS_train, ACC_train, LOSS_val, ACC_val
 
@@ -130,7 +129,7 @@ class NetFlow(object):
                 if torch.cuda.is_available():
                     outputs = outputs.cpu()
                     labels = labels.cpu()
-                prediction = torch.argmax(outputs).long()
+                prediction = torch.argmax(outputs, dim=-1).long()
                 _acc = torch.mean(prediction == labels, dtype=torch.float).item()
                 loss_test.append(_loss.item()), acc_test.append(_acc)
         print("====> Testing -- [loss: %.5f] -- [acc: %.5f]" %

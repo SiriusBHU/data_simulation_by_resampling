@@ -2,10 +2,16 @@
     debug file for each model
     author: Sirius HU
 """
+import torch
+import torch.optim as optim
+import torch.nn as nn
 
 from dataflow.CWRU_data_load import CaseWesternBearing
 from utils.train_flow import NetFlow, ClassicMLModelFlow
 from utils.dsr import DataSimulationByReSampling
+from utils.dataset import *
+from torch.utils.data import DataLoader
+import logging
 
 # import swallow model
 from models.knn import KNN
@@ -15,410 +21,122 @@ from models.cnn import CNN
 # import deep model
 from models.ticnn import TINet
 from models.dncnn import DNNet
-from sklearn.
+import numpy as np
+
+
+logging.basicConfig(level=logging.INFO,
+                    format="[%(asctime)s--%(name)s--%(module)s--%(levelname)s]: %(message)s")
+
+
+def data_init(sample_num, sample_len):
+    import os
+    path_project = os.getcwd()
+
+    cwdata = CaseWesternBearing(sample_num, sample_len, path_project=path_project)
+    cwdata.dataset_prepare_CWRU(sample_num, sample_len)
+    data_wc, labels_wc = cwdata.working_condition_transferring()
+
+    def FFT(x):
+        from scipy.fftpack import fft
+        wcs, nums, chs, dims = np.shape(x)
+        x = x.reshape(wcs * nums * chs, dims)
+        f = np.abs(fft(x))[:, :dims//2] / np.sqrt(dims) * 2
+        x = x.reshape(wcs, nums, chs, -1)
+        return f.reshape(wcs, nums, chs, -1)
+
+    return data_wc, FFT(data_wc), labels_wc
+
+
+def data_augment(data, labels, dsr):
+
+    wcs, nums, chs, dims = data.shape
+    data, labels = data.reshape(wcs * nums * chs, -1), labels.reshape(wcs * nums, -1)
+    simu_data, simu_freq, simu_labels = dsr(data, labels, expand_num=1)
+    simu_data, simu_freq, simu_labels = simu_data.reshape(wcs, nums, chs, -1), \
+                                        simu_freq.reshape(wcs, nums, chs, -1), \
+                                        simu_labels.reshape(wcs, nums, -1)
+    return simu_data, simu_freq, simu_labels
+
+
+def data_train_val_split(x, f, y, val_split=0.5):
+
+    wcs, nums, chs, dims = x.shape
+    perm = np.arange(nums)
+    np.random.shuffle(perm)
+    val_num = int(nums * val_split)
+
+    return x[:, perm[val_num:]], f[:, perm[val_num:]], y[:, perm[val_num:]], \
+           x[:, perm[:val_num]], f[:, perm[:val_num]], y[:, perm[:val_num]]
+
+
+def transferring_test(flow_model, data_pack, dataset, batch_size):
+
+    train_data, train_labels, \
+    val_data, val_labels, \
+    train_simu_data, train_simu_labels, \
+    val_simu_data, val_simu_labels = data_pack
+
+    wcs = train_data.shape[0]
+    for i in range(wcs):
+
+        # train_set = dataset(train_data[i], train_labels[i])
+        # val_set = dataset(val_data[i], val_labels[i])
+        # train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+        # val_loader = DataLoader(val_set, batch_size=val_data.shape[1], shuffle=False)
+        #
+        # logging.info("Training with Raw Data:")
+        # flow_model.train(train_loader, val_loader)
+        # for j in range(wcs):
+        #     if i != j:
+        #         test_set = dataset(val_data[j], val_labels[j])
+        #         test_loader = DataLoader(test_set, batch_size=val_data.shape[1], shuffle=False)
+        #         print("from %d HP --> %d HP:" % (i, j))
+        #         flow_model.evaluation(test_loader)
+
+        train_simu_set = dataset(train_simu_data[i], train_simu_labels[i])
+        val_simu_set = dataset(val_simu_data[i], val_simu_labels[i])
+        train_simu_loader = DataLoader(train_simu_set, batch_size=batch_size, shuffle=True)
+        val_simu_loader = DataLoader(val_simu_set, batch_size=val_simu_data.shape[1], shuffle=False)
+
+        logging.info("Training with Augmented Data:")
+        flow_model.train(train_simu_loader, val_simu_loader)
+        for j in range(wcs):
+            if i != j:
+                test_set = dataset(val_data[j], val_labels[j])
+                test_loader = DataLoader(test_set, batch_size=val_data.shape[1], shuffle=False)
+                print("from %d HP --> %d HP:" % (i, j))
+                flow_model.evaluation(test_loader)
 
 
 if __name__ == '__main__':
 
-    sample_size = 1024
-    sample_num = 300
-    # data_wc, label_wc, data_fs, label_fs = data_preparation_CWRU(sample_size, sample_num)
-    data_wc, label_wc, data_fs, label_fs = data1D_reload_CWRU()
-    data_wc_fft = [dpp.fast_frontier_transform(item) for item in data_wc]
+    SAMPLE_NUM = 300
+    SAMPLE_LEN = 1024
+    BATCH_SIZE = 16
+    EPOCHS = 200
 
-    # acc = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_i = main(data_wc[i], label_wc[i], data_wc[1:], label_wc[1:],
-    #                      data_wc_fft[i], label_wc[i], data_wc_fft[1:], label_wc[1:],
-    #                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                      epoch=100, val_rate=0.5, mix_up=True, a=0.2)
-    #         acc.append(acc_i)
-    #
-    # np.savez("acc_dncnn_mix_only.npz", acc=acc)
+    data, freq, labels = data_init(300, 1024)
+    dsr = DataSimulationByReSampling(var_r=0.02, var_load=0.02, var_noise=0.02)
+    simu_data, simu_freq, simu_labels = data_augment(data, labels, dsr)
 
-    choice = [
-        [[1, 0], [1, 0], [0, 0.02]],
-        [[1, 0], [1, 0.10], [0, 0]],
-        [[1, 0], [1, 0.10], [0, 0.02]],
-        [[1, 0.02], [1, 0], [0, 0]],
-        [[1, 0.02], [1, 0], [0, 0.02]],
-        [[1, 0.02], [1, 0.10], [0, 0]]
-              ]
-    parammmm = ["100", "010", "001", "101", "110", "011"]
+    train_data, train_freq, train_labels, val_data, val_freq, val_labels = data_train_val_split(data, freq, labels)
+    train_simu_data, train_simu_freq, train_simu_labels, val_simu_data, val_simu_freq, val_simu_labels = \
+        data_train_val_split(simu_data, simu_freq, simu_labels)
 
-    acc = []
-    for k in range(6):
+    freq_pack = (train_freq, train_labels, val_freq, val_labels,
+                 train_simu_freq, train_simu_labels, val_simu_freq, val_simu_labels)
+    time_pack = (train_data, train_labels, val_data, val_labels,
+                 train_simu_data, train_simu_labels, val_simu_data, val_simu_labels)
 
-        freq_simu, time_simu, label_simu, _ = \
-            dff.enhanced_set_prepare("CWRU_1D_simu_expand_ablation", 1, data_wc, label_wc, choice[k])
-        paramm = parammmm[k]  #"0.1_" + str(0.02 * k + 0.02)
+    bp_net = BPNet(SAMPLE_LEN // 2, 600, labels.shape[-1])
+    bp_opt = optim.Adam(bp_net.parameters(), lr=5e-3, weight_decay=1e-5)
+    bp_sche = optim.lr_scheduler.StepLR(bp_opt, step_size=30, gamma=0.3)
+    bpnn = NetFlow(bp_net,
+                   loss_func=nn.CrossEntropyLoss(),
+                   optimizer=bp_opt,
+                   lr_scheduler=bp_sche,
+                   epochs=EPOCHS)
 
-        for i in range(1, 4):
-            for j in range(10):
-                acc_i = main(time_simu[i], label_simu[i], data_wc[1:], label_wc[1:],
-                             freq_simu[i], label_simu[i], data_wc_fft[1:], label_wc[1:],
-                             kn_param=5, sv_param=[1, 0.01], bp_param=600,
-                             epoch=100, val_rate=0.5, mix_up=True, a=0.2)
-                acc.append(acc_i)
+    transferring_test(bpnn, freq_pack, DealDateSetFlatten, BATCH_SIZE)
 
-        np.savez("acc_dncnn_ablation.npz", acc=acc)
-
-
-    print(-1)
-
-    # time_mix = [np.concatenate(((item1.reshape(10, 300, -1))[:, :150, :], (item2.reshape(10, 300, -1))[:, :150, :]), axis=1)
-    #             for item1, item2 in zip(data_wc, time_simu)]
-    # freq_mix = [np.concatenate(((item1.reshape(10, 300, -1))[:, :150, :], (item2.reshape(10, 300, -1))[:, :150, :]), axis=1)
-    #             for item1, item2 in zip(data_wc_fft, freq_simu)]
-    #
-    # time_mix = [item.reshape(-1, 1024) for item in time_mix]
-    # freq_mix = [item.reshape(-1, 512) for item in freq_mix]
-
-    # acc_mix = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_mix.append(main(time_mix[i], label_wc[i], data_wc[1:], label_wc[1:],
-    #                             freq_mix[i], label_wc[i], data_wc_fft[1:], label_wc[1:],
-    #                             kn_param=10, sv_param=[1, 0.07], bp_param=600,
-    #                             epoch=100, val_rate=0.5, mix_up=False, a=0.2))
-    # acc_mix = (np.array(acc_mix)).reshape(-1, 10, 6, 3)
-    # np.savez("acc_mix" + paramm+".npz", acc=acc_mix)
-    #
-    # acc_mixup = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_mixup.append(main(time_mix[i], label_wc[i], data_wc[1:], label_wc[1:],
-    #                               freq_mix[i], label_wc[i], data_wc_fft[1:], label_wc[1:],
-    #                               kn_param=10, sv_param=[1, 0.07], bp_param=600,
-    #                               epoch=100, val_rate=0.5, mix_up=True, a=0.2))
-    # acc_mixup = (np.array(acc_mixup)).reshape(-1, 10, 6, 3)
-    # np.savez("acc_mixup" + paramm+".npz", acc=acc_mixup)
-
-
-    # freq_simu, time_simu, label_simu, time_simu_freq = dff.enhanced_set_reload("CWRU_1D_simu_expand")
-    # # freq_simu, time_simu, label_simu, _ = \
-    # #     dff.enhanced_set_prepare("CWRU_1D_simu_expand", 1, data_wc, label_wc, [[1, 0.02], [1, 0.10], [0, 0.02]])
-    #
-    # acc = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_i = main(data_wc[i], label_wc[i], data_wc[1:], label_wc[1:],
-    #                      data_wc_fft[i], label_wc[i], data_wc_fft[1:], label_wc[1:],
-    #                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                      epoch=100, val_rate=0.5, mix_up=False, a=0.2)
-    #         acc.append(acc_i)
-    #
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_i = main(time_simu[i], label_simu[i], data_wc[1:], label_wc[1:],
-    #                      freq_simu[i], label_simu[i], data_wc_fft[1:], label_wc[1:],
-    #                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                      epoch=100, val_rate=0.5, mix_up=False, a=0.2)
-    #         acc.append(acc_i)
-    #
-    # np.savez("acc_dncnn.npz", acc=acc)
-    #
-    #
-    #
-    # prepare few shot set....half for training half for validation
-    # few_time5 = [(item.reshape(10, 300, -1))[:, :10] for item in data_wc]
-    # few_freq5 = [(item.reshape(10, 300, -1))[:, :10] for item in data_wc_fft]
-    # few_label5 = [(item.reshape(10, 300, -1))[:, :10] for item in label_wc]
-    # few_time5 = [item.reshape(-1, 1024) for item in few_time5]
-    # few_freq5 = [item.reshape(-1, 512) for item in few_freq5]
-    # few_label5 = [item.reshape(-1) for item in few_label5]
-    #
-    # few_time10 = [(item.reshape(10, 300, -1))[:, :20] for item in data_wc]
-    # few_freq10 = [(item.reshape(10, 300, -1))[:, :20] for item in data_wc_fft]
-    # few_label10 = [(item.reshape(10, 300, -1))[:, :20] for item in label_wc]
-    # few_time10 = [item.reshape(-1, 1024) for item in few_time10]
-    # few_freq10 = [item.reshape(-1, 512) for item in few_freq10]
-    # few_label10 = [item.reshape(-1) for item in few_label10]
-    #
-    # few_time20 = [(item.reshape(10, 300, -1))[:, :50] for item in data_wc]
-    # few_freq20 = [(item.reshape(10, 300, -1))[:, :50] for item in data_wc_fft]
-    # few_label20 = [(item.reshape(10, 300, -1))[:, :50] for item in label_wc]
-    # few_time20 = [item.reshape(-1, 1024) for item in few_time20]
-    # few_freq20 = [item.reshape(-1, 512) for item in few_freq20]
-    # few_label20 = [item.reshape(-1) for item in few_label20]
-    #
-    # few_time50 = [(item.reshape(10, 300, -1))[:, :100] for item in data_wc]
-    # few_freq50 = [(item.reshape(10, 300, -1))[:, :100] for item in data_wc_fft]
-    # few_label50 = [(item.reshape(10, 300, -1))[:, :100] for item in label_wc]
-    # few_time50 = [item.reshape(-1, 1024) for item in few_time50]
-    # few_freq50 = [item.reshape(-1, 512) for item in few_freq50]
-    # few_label50 = [item.reshape(-1) for item in few_label50]
-    #
-    # few_freq_simu1, few_time_simu1, few_label_simu1, _ = \
-    #     dff.enhanced_set_prepare("CWRU_1D_simu_expand1", 1, few_time5, few_label5, [[1, 0.02], [1, 0.10], [0, 0.02]])
-    # #
-    # few_freq_simu3, few_time_simu3, few_label_simu3, _ = \
-    #     dff.enhanced_set_prepare("CWRU_1D_simu_expand4", 4, few_time5, few_label5, [[1, 0.02], [1, 0.10], [0, 0.02]])
-    # #
-    # few_freq_simu9, few_time_simu9, few_label_simu9, _ = \
-    #     dff.enhanced_set_prepare("CWRU_1D_simu_expand9", 9, few_time5, few_label5, [[1, 0.02], [1, 0.10], [0, 0.02]])
-    # # freq_simu, time_simu, label_simu, time_simu_freq = dff.enhanced_set_reload("CWRU_1D_simu_expand1")
-    #
-    # few_time_simu1 = [item * np.sqrt(2) for item in few_time_simu1]
-    # few_time_simu3 = [item * np.sqrt(2) for item in few_time_simu3]
-    # few_time_simu9 = [item * np.sqrt(2) for item in few_time_simu9]
-    #
-    #
-    # """ 最优超参数调整原则，根据源域数据进行调整！！！，source=1，那只能根据 1HP 数据的正确率调整 """
-    #
-    # freq_simu2 = data_concat(few_freq_simu1, few_freq5)
-    # time_simu2 = data_concat(few_time_simu1, few_time5)
-    # label_simu2 = data_concat(few_label_simu1, few_label5)
-    # #
-    # freq_simu4 = data_concat(few_freq_simu3, few_freq5)
-    # time_simu4 = data_concat(few_time_simu3, few_time5)
-    # label_simu4 = data_concat(few_label_simu3, few_label5)
-    #
-    # freq_simu10 = data_concat(few_freq_simu9, few_freq5)
-    # time_simu10 = data_concat(few_time_simu9, few_time5)
-    # label_simu10 = data_concat(few_label_simu9, few_label5)
-    #
-    #
-    # acc = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_i = main(few_time5[i], few_label5[i], data_wc[1:], label_wc[1:],
-    #                      few_freq5[i], few_label5[i], data_wc_fft[1:], label_wc[1:],
-    #                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                      epoch=100, val_rate=0.5, mix_up=False, a=0.2)
-    #         acc.append(acc_i)
-    #
-    # np.savez("acc_dncnn_few.npz", acc=acc)
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_i = main(few_time10[i], few_label10[i], data_wc[1:], label_wc[1:],
-    #                      few_freq10[i], few_label10[i], data_wc_fft[1:], label_wc[1:],
-    #                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                      epoch=100, val_rate=0.5, mix_up=False, a=0.2)
-    #         acc.append(acc_i)
-    #
-    # np.savez("acc_dncnn_few.npz", acc=acc)
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_i = main(few_time20[i], few_label20[i], data_wc[1:], label_wc[1:],
-    #                      few_freq20[i], few_label20[i], data_wc_fft[1:], label_wc[1:],
-    #                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                      epoch=100, val_rate=0.5, mix_up=False, a=0.2)
-    #         acc.append(acc_i)
-    #
-    # np.savez("acc_dncnn_few.npz", acc=acc)
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_i = main(few_time50[i], few_label50[i], data_wc[1:], label_wc[1:],
-    #                      few_freq50[i], few_label50[i], data_wc_fft[1:], label_wc[1:],
-    #                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                      epoch=100, val_rate=0.5, mix_up=False, a=0.2)
-    #         acc.append(acc_i)
-    #
-    # np.savez("acc_dncnn_few.npz", acc=acc)
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_i = main(time_simu2[i], label_simu2[i], data_wc[1:], label_wc[1:],
-    #                      freq_simu2[i], label_simu2[i], data_wc_fft[1:], label_wc[1:],
-    #                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                      epoch=100, val_rate=0.5, mix_up=False, a=0.2)
-    #         acc.append(acc_i)
-    #
-    # np.savez("acc_dncnn_few.npz", acc=acc)
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_i = main(time_simu4[i], label_simu4[i], data_wc[1:], label_wc[1:],
-    #                      freq_simu4[i], label_simu4[i], data_wc_fft[1:], label_wc[1:],
-    #                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                      epoch=100, val_rate=0.5, mix_up=False, a=0.2)
-    #         acc.append(acc_i)
-    #
-    # np.savez("acc_dncnn_few.npz", acc=acc)
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_i = main(time_simu10[i], label_simu10[i], data_wc[1:], label_wc[1:],
-    #                      freq_simu10[i], label_simu10[i], data_wc_fft[1:], label_wc[1:],
-    #                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                      epoch=100, val_rate=0.5, mix_up=False, a=0.2)
-    #         acc.append(acc_i)
-    #
-    # np.savez("acc_dncnn_few.npz", acc=acc)
-
-
-
-
-    # acc_origin_few = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_origin_few.append(main(few_time5[i], few_label5[i], data_wc[1:], label_wc[1:],
-    #                                    few_freq5[i], few_label5[i], data_wc_fft[1:], label_wc[1:],
-    #                                    kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                                    epoch=100, val_rate=0.5, mix_up=False, a=0.2))
-    # acc_origin_few = (np.array(acc_origin_few)).reshape(-1, 10, 2, 3)
-    # np.savez("acc_origin_few5.npz", acc=acc_origin_few)
-
-    # acc_origin_few10 = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_origin_few10.append(main(few_time10[i], few_label10[i], data_wc[1:], label_wc[1:],
-    #                                      few_freq10[i], few_label10[i], data_wc_fft[1:], label_wc[1:],
-    #                                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                                      epoch=100, val_rate=0.5, mix_up=False, a=0.2))
-    # acc_origin_few10 = (np.array(acc_origin_few10)).reshape(-1, 10, 6, 3)
-    # np.savez("acc_origin_few10.npz", acc=acc_origin_few10)
-
-    #
-    # acc_origin_few20 = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_origin_few20.append(main(few_time20[i], few_label20[i], data_wc[1:], label_wc[1:],
-    #                                      few_freq20[i], few_label20[i], data_wc_fft[1:], label_wc[1:],
-    #                                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                                      epoch=100, val_rate=0.5, mix_up=False, a=0.2))
-    # acc_origin_few20 = (np.array(acc_origin_few20)).reshape(-1, 10, 2, 3)
-    # np.savez("acc_origin_few25.npz", acc=acc_origin_few20)
-    #
-    # acc_origin_few50 = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_origin_few50.append(main(few_time50[i], few_label50[i], data_wc[1:], label_wc[1:],
-    #                                      few_freq50[i], few_label50[i], data_wc_fft[1:], label_wc[1:],
-    #                                      kn_param=5, sv_param=[1, 0.01], bp_param=600,
-    #                                      epoch=100, val_rate=0.5, mix_up=False, a=0.2))
-    # acc_origin_few50 = (np.array(acc_origin_few50)).reshape(-1, 10, 2, 3)
-    # np.savez("acc_origin_few50.npz", acc=acc_origin_few50)
-
-
-
-    # acc_simu2 = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_simu2.append(main(time_simu2[i], label_simu2[i], data_wc[1:], label_wc[1:],
-    #                               freq_simu2[i], label_simu2[i], data_wc_fft[1:], label_wc[1:],
-    #                               kn_param=5, sv_param=[10, 0.07], bp_param=600,
-    #                               epoch=100, val_rate=0.5, mix_up=False, a=0.2))
-    # acc_simu2 = (np.array(acc_simu2)).reshape(-1, 10, 2, 3)
-    # np.savez("acc_simu_expand2.npz", acc=acc_simu2)
-    #
-    # acc_simu5 = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_simu5.append(main(time_simu4[i], label_simu4[i], data_wc[1:], label_wc[1:],
-    #                               freq_simu4[i], label_simu4[i], data_wc_fft[1:], label_wc[1:],
-    #                               kn_param=5, sv_param=[10, 0.07], bp_param=600,
-    #                               epoch=100, val_rate=0.5, mix_up=False, a=0.2))
-    # acc_simu5 = (np.array(acc_simu5)).reshape(-1, 10, 4, 3)
-    # np.savez("acc_simu_expand5.npz", acc=acc_simu5)
-    #
-    # acc_simu10 = []
-    # for i in range(1, 4):
-    #     for j in range(10):
-    #         acc_simu10.append(main(time_simu10[i], label_simu10[i], data_wc[1:], label_wc[1:],
-    #                                freq_simu10[i], label_simu10[i], data_wc_fft[1:], label_wc[1:],
-    #                                kn_param=5, sv_param=[10, 0.07], bp_param=600,
-    #                                epoch=200, val_rate=0.5, mix_up=False, a=0.2))
-    # acc_simu10 = (np.array(acc_simu10)).reshape(-1, 10, 2, 3)
-    # np.savez("acc_simu_expand10_time.npz", acc=acc_simu10)
-
-
-
-
-
-
-
-
-# bpnn1 = bpnn.BPNN(in_num=512, hidden_num=600, out_num=10, batch_size=10, lr=0.001, epoch=100)
-# net, test_loss, test_acc = bpnn1.train(data_wc_fft[1], label_wc[1], data_wc_fft[1:], label_wc[1:], val_rate=0.5)
-#
-# bpnn2 = bpnn.BPNN(in_num=512, hidden_num=600, out_num=10, batch_size=10, lr=0.001, epoch=100)
-# net1, test_loss1, test_acc1 = bpnn2.train(freq_simu[1], label_simu[1], data_wc_fft[1:], label_wc[1:], val_rate=0.5)
-#
-# bpnn3 = bpnn.BPNN(in_num=512, hidden_num=600, out_num=10, batch_size=10, lr=0.001, epoch=100)
-# net3, test_loss3, test_acc3 = bpnn3.train(np.concatenate((freq_simu[1], data_wc_fft[1]), axis=0),
-#                                           np.concatenate((label_simu[1], label_wc[1]), axis=0),
-#                                           data_wc_fft[1:], label_wc[1:], val_rate=0.75)
-# ti_cnn1 = ticnn.TICNN(in_num=1024, out_num=10, batch_size=10, lr=0.001, epoch=100)
-# net1, test_loss1, test_acc1 = ti_cnn1.train(data_wc[1], label_wc[1], data_wc[1:], label_wc[1:], val_rate=0.5)
-#
-# ti_cnn2 = ticnn.TICNN(in_num=1024, out_num=10, batch_size=10, lr=0.001, epoch=100)
-# net2, test_loss2, test_acc2 = ti_cnn2.train(time_simu[1], label_simu[1], data_wc[1:], label_wc[1:], val_rate=0.5)
-#
-# ti_cnn3 = ticnn.TICNN(in_num=1024, out_num=10, batch_size=10, lr=0.001, epoch=100)
-# net3, test_loss3, test_acc3 = ti_cnn3.train(np.concatenate((time_simu[1], data_wc[1]), axis=0),
-#                                             np.concatenate((label_simu[1], label_wc[1]), axis=0),
-#                                             data_wc[1:], label_wc[1:], val_rate=0.75)
-#
-# "从 lenet 的表现上看，时间上的仿真效果比较一般，或许可以考虑对相位角进行插值了 "
-# lenet1 = lenet.LeNet(in_num=1024, out_num=10, batch_size=50, lr=0.001, epoch=100)
-# net1, test_loss1, test_acc1 = lenet1.train(data_wc[3], label_wc[3], data_wc[1:], label_wc[1:], val_rate=0.5)
-#
-# lenet2 = lenet.LeNet(in_num=1024, out_num=10, batch_size=50, lr=0.001, epoch=100)
-# net2, test_loss2, test_acc2 = lenet2.train(time_simu[3], label_simu[3], data_wc[1:], label_wc[1:], val_rate=0.5)
-#
-# lenet3 = lenet.LeNet(in_num=1024, out_num=10, batch_size=50, lr=0.001, epoch=100)
-# net3, test_loss3, test_acc3 = lenet3.train(np.concatenate((time_simu[3], data_wc[3]), axis=0),
-#                                            np.concatenate((label_simu[3], label_wc[3]), axis=0),
-#                                            data_wc[1:], label_wc[1:], val_rate=0.75)
-#
-# cnn1 = cnn.PCNN(in_num=512, out_num=10, batch_size=50, lr=0.001, epoch=100)
-# net1, test_loss1, test_acc1 = cnn1.train(data_wc_fft[3], label_wc[3], data_wc_fft[1:], label_wc[1:], val_rate=0.5)
-#
-# cnn2 = cnn.PCNN(in_num=512, out_num=10, batch_size=50, lr=0.001, epoch=100)
-# net2, test_loss2, test_acc2 = cnn2.train(freq_simu[3], label_simu[3], data_wc_fft[1:], label_wc[1:], val_rate=0.5)
-#
-# cnn3 = cnn.PCNN(in_num=512, out_num=10, batch_size=50, lr=0.001, epoch=100)
-# net3, test_loss3, test_acc3 = cnn3.train(np.concatenate((freq_simu[3], data_wc_fft[3]), axis=0),
-#                                          np.concatenate((label_simu[3], label_wc[3]), axis=0),
-#                                          data_wc_fft[1:], label_wc[1:], val_rate=0.75)
-#
-# knn1 = knn.Pure_KNN(neighbors=5, algorithm="auto")
-# model1, acc1, feature_map1 = knn1.train(data_wc_fft[1], label_wc[1], data_wc_fft[1:], label_wc[1:], val_rate=0.5)
-#
-# knn2 = knn.Pure_KNN(neighbors=15, algorithm="auto")
-# model2, acc2, feature_map2 = knn2.train(freq_simu[1], label_simu[1], data_wc_fft[1:], label_wc[1:], val_rate=0.5)
-#
-# knn3 = knn.Pure_KNN(neighbors=5, algorithm="auto")
-# model3, acc3, feature_map3 = knn3.train(np.concatenate((freq_simu[1], data_wc_fft[1]), axis=0),
-#                                         np.concatenate((label_simu[1], label_wc[1]), axis=0),
-#                                         data_wc_fft[1:], label_wc[1:], val_rate=0.75)
-#
-#
-# svm1 = svm.Pure_SVM(C=1, kernel="rbf", gamma=0.01, decision_function_shape="ovo")
-# model1, acc1, feature_map1 = svm1.PSVM_train(data_wc_fft[1], label_wc[1], data_wc_fft[1:], label_wc[1:])
-#
-# svm2 = svm.Pure_SVM(C=10, kernel="rbf", gamma=0.07, decision_function_shape="ovo")
-# model2, acc2, feature_map2 = svm2.PSVM_train(freq_simu[1], label_simu[1], data_wc_fft[1:], label_wc[1:])
-#
-# svm3 = svm.Pure_SVM(C=10, kernel="rbf", gamma=0.07, decision_function_shape="ovo")
-# model3, acc3, feature_map3 = svm3.PSVM_train(np.concatenate((freq_simu[1], data_wc_fft[1]), axis=0),
-#                                              np.concatenate((label_simu[1], label_wc[1]), axis=0),
-#                                              data_wc_fft[1:], label_wc[1:], val_rate=0.75)
-
-
-# def show_data(data, fig_num, ylim):
-#
-#     _, dim = np.shape(data[0])
-#     plt.figure(fig_num)
-#     for i in range(4):
-#         plt.subplot(4, 1, i + 1)
-#         plt.plot(data[0][i + 1800])
-#         plt.xlim(0, dim)
-#         plt.ylim(ylim)
-#
-# time_ylim = (-2, 2)
-# freq_ylim = (0, 2)
-# show_data(data_wc, 1, time_ylim)
-# show_data(time_simu, 2, time_ylim)
-#
-# show_data(data_wc_fft, 3, freq_ylim)
-# show_data(freq_simu, 4, freq_ylim)
-# show_data(time_simu_freq, 5, freq_ylim)
-#
-# show_data(data_wc[3:], 6, time_ylim)
-# show_data(data_wc_fft[3:], 7, freq_ylim)
-#
-# plt.show()
-
-
-print(1)
+    print(1)
