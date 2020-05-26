@@ -79,19 +79,19 @@ def transferring_test(flow_model, data_pack, dataset, batch_size):
     wcs = train_data.shape[0]
     for i in range(wcs):
 
-        # train_set = dataset(train_data[i], train_labels[i])
-        # val_set = dataset(val_data[i], val_labels[i])
-        # train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
-        # val_loader = DataLoader(val_set, batch_size=val_data.shape[1], shuffle=False)
-        #
-        # logging.info("Training with Raw Data:")
-        # flow_model.train(train_loader, val_loader)
-        # for j in range(wcs):
-        #     if i != j:
-        #         test_set = dataset(val_data[j], val_labels[j])
-        #         test_loader = DataLoader(test_set, batch_size=val_data.shape[1], shuffle=False)
-        #         print("from %d HP --> %d HP:" % (i, j))
-        #         flow_model.evaluation(test_loader)
+        train_set = dataset(train_data[i], train_labels[i])
+        val_set = dataset(val_data[i], val_labels[i])
+        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_set, batch_size=val_data.shape[1], shuffle=False)
+
+        logging.info("Training with Raw Data:")
+        flow_model.train(train_loader, val_loader)
+        for j in range(wcs):
+            if i != j:
+                test_set = dataset(val_data[j], val_labels[j])
+                test_loader = DataLoader(test_set, batch_size=val_data.shape[1], shuffle=False)
+                print("from %d HP --> %d HP:" % (i, j))
+                flow_model.evaluation(test_loader)
 
         train_simu_set = dataset(train_simu_data[i], train_simu_labels[i])
         val_simu_set = dataset(val_simu_data[i], val_simu_labels[i])
@@ -113,7 +113,7 @@ if __name__ == '__main__':
     SAMPLE_NUM = 300
     SAMPLE_LEN = 1024
     BATCH_SIZE = 16
-    EPOCHS = 200
+    EPOCHS = 100
 
     data, freq, labels = data_init(300, 1024)
     dsr = DataSimulationByReSampling(var_r=0.02, var_load=0.02, var_noise=0.02)

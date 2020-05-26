@@ -7,7 +7,6 @@ class BPNet(nn.Module):
         super(BPNet, self).__init__()
         self.sequential = nn.Sequential(
             nn.Linear(in_num, hidden_num),
-            nn.Dropout(0.3),
             nn.ReLU(),
             nn.Linear(hidden_num, out_num),
         )
