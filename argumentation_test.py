@@ -129,10 +129,18 @@ if __name__ == '__main__':
                  train_simu_data, train_simu_labels, val_simu_data, val_simu_labels)
 
     bp_net = BPNet(SAMPLE_LEN // 2, 600, labels.shape[-1])
-    bp_opt = optim.Adam(bp_net.parameters(), lr=5e-3, weight_decay=1e-5)
-    bp_sche = optim.lr_scheduler.StepLR(bp_opt, step_size=30, gamma=0.3)
+    bp_opt = optim.Adam(bp_net.parameters(), lr=1e-3, weight_decay=1e-5)
+    bp_sche = optim.lr_scheduler.StepLR(bp_opt, step_size=30, gamma=0.5)
+    def criterion(outputs, labels):
+
+        one_hot = torch.zeros(labels.size(0), 10).cuda()
+        one_hot = one_hot.scatter_(1, labels.view(-1, 1), 1)
+        outputs = nn.Softmax(dim=-1)(outputs)
+        prob = torch.log(outputs + 1e-8)
+        loss = torch.mean(- one_hot * prob)
+        return loss
     bpnn = NetFlow(bp_net,
-                   loss_func=nn.CrossEntropyLoss(),
+                   loss_func=criterion, #nn.CrossEntropyLoss(),
                    optimizer=bp_opt,
                    lr_scheduler=bp_sche,
                    epochs=EPOCHS)
