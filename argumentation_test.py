@@ -4,7 +4,18 @@
 """
 
 from dataflow.CWRU_data_load import CaseWesternBearing
-import argparse
+from utils.train_flow import NetFlow, ClassicMLModelFlow
+from utils.dsr import DataSimulationByReSampling
+
+# import swallow model
+from models.knn import KNN
+from models.svm import SVM
+from models.bpnn import BPNet
+from models.cnn import CNN
+# import deep model
+from models.ticnn import TINet
+from models.dncnn import DNNet
+from sklearn.
 
 
 if __name__ == '__main__':
